@@ -217,14 +217,31 @@ function updateCountdownDisplay() {
 
 function announceAll() {
     if (autoPaused || watchlist.length === 0) return;
-    const texts = watchlist
-        .map(s => quotes[s])
-        .filter(Boolean)
-        .map(buildSpeechText);
 
-    if (texts.length === 0) return;
-    const combined = "Here's your portfolio update. " + texts.join('. Next, ');
-    speak(combined, { priority: true });
+    speak("Here's your portfolio update.", { priority: true });
+
+    watchlist.forEach(symbol => {
+        const q = quotes[symbol];
+        if (!q) return;
+
+        const text = buildSpeechText(q);
+        const isUp = q.change >= 0;
+        const pct = Math.abs(q.changePercent);
+
+        // Dynamic emotions
+        let pitch = 1.0;
+        let rate = 0.93;
+
+        if (isUp) {
+            pitch = 1.05 + (Math.min(pct, 10) / 100); // 1.05 to 1.15
+            rate = 0.95 + (Math.min(pct, 10) / 200);  // 0.95 to 1.0
+        } else {
+            pitch = 0.95 - (Math.min(pct, 10) / 100); // 0.95 down to 0.85
+            rate = 0.90 - (Math.min(pct, 10) / 200);  // 0.90 down to 0.85
+        }
+
+        speak(text, { pitch, rate });
+    });
 }
 
 function announceOne(symbol) {
@@ -233,7 +250,23 @@ function announceOne(symbol) {
         speak(`I don't have data for ${symbol} yet.`, { priority: true });
         return;
     }
-    speak(buildSpeechText(q), { priority: true });
+
+    const text = buildSpeechText(q);
+    const isUp = q.change >= 0;
+    const pct = Math.abs(q.changePercent);
+
+    let pitch = 1.0;
+    let rate = 0.93;
+
+    if (isUp) {
+        pitch = 1.05 + (Math.min(pct, 10) / 100);
+        rate = 0.95 + (Math.min(pct, 10) / 200);
+    } else {
+        pitch = 0.95 - (Math.min(pct, 10) / 100);
+        rate = 0.90 - (Math.min(pct, 10) / 200);
+    }
+
+    speak(text, { priority: true, pitch, rate });
 }
 
 // ─── Voice Command Handler ────────────────────────────────────────────────────

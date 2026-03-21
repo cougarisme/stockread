@@ -23,18 +23,19 @@ export function initTTS() {
     speechSynthesis.onvoiceschanged = loadVoices;
 }
 
-export function speak(text, { priority = false } = {}) {
+export function speak(text, { priority = false, pitch = ttsPitch, rate = ttsRate } = {}) {
     if (!window.speechSynthesis) return;
     if (priority) speechSynthesis.cancel();
 
     const utter = new SpeechSynthesisUtterance(text);
     utter.voice = ttsVoice;
-    utter.pitch = ttsPitch;
-    utter.rate = ttsRate;
+    utter.pitch = pitch;
+    utter.rate = rate;
     utter.volume = ttsVolume;
     speechSynthesis.speak(utter);
     return utter;
 }
+
 
 export function cancelSpeech() {
     if (window.speechSynthesis) speechSynthesis.cancel();

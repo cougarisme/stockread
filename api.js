@@ -56,14 +56,37 @@ async function fetchFinnhubQuotes(symbols) {
 }
 
 /**
- * Build a natural-language TTS string from a quote object.
- * e.g. "Apple Inc. is at 247 dollars and 99 cents, down 0.4 percent"
+ * Build a human-readable, expressive TTS string from a quote object.
+ * e.g. "Apple Inc. is soaring today, up a fantastic 2.3 percent!"
  */
 export function buildSpeechText(quote) {
-  const dir = quote.change >= 0 ? 'up' : 'down';
-  const pct = Math.abs(quote.changePercent).toFixed(1);
+  const pct = Math.abs(quote.changePercent);
+  const isUp = quote.change >= 0;
+
+  let emotion = "";
+  if (isUp) {
+    if (pct > 5) emotion = "is absolutely soaring today, up a massive";
+    else if (pct > 2) emotion = "is having a great day, gaining";
+    else if (pct > 0.5) emotion = "is showing a solid gain of";
+    else emotion = "is slightly up, by";
+  } else {
+    if (pct > 5) emotion = "is taking a heavy hit today, dropping a staggering";
+    else if (pct > 2) emotion = "is sliding down, losing";
+    else if (pct > 0.5) emotion = "is taking a bit of a dip, down";
+    else emotion = "is slightly lower today, by";
+  }
+
   const dollars = Math.floor(Math.abs(quote.price));
   const cents = Math.round((Math.abs(quote.price) - dollars) * 100);
   const centsStr = cents > 0 ? ` and ${cents} cents` : '';
-  return `${quote.name} is at ${dollars} dollars${centsStr}, ${dir} ${pct} percent`;
+
+  let context = "";
+  if (quote.high && Math.abs(quote.price - quote.high) < (quote.price * 0.001)) {
+    context = ". It's actually trading near its daily high!";
+  } else if (quote.low && Math.abs(quote.price - quote.low) < (quote.price * 0.001)) {
+    context = ". It's currently near its daily low.";
+  }
+
+  return `${quote.name} ${emotion} ${pct.toFixed(1)} percent, sitting at ${dollars} dollars${centsStr}${context}`;
 }
+
