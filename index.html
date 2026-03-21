@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description"
+        content="StockRead — Listen to stock prices hands-free while driving. Voice-interactive dashboard with real-time quotes." />
+    <title>StockRead — Driving Mode</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>" />
+</head>
+
+<body>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay">
+        <div class="loader-ring"></div>
+        <p>Fetching market data…</p>
+    </div>
+
+    <!-- STT unsupported banner -->
+    <div id="stt-unsupported">
+        ⚠️ <span>Voice commands require <strong>Chrome</strong> or <strong>Edge</strong>. Price reading (TTS) still
+            works.</span>
+    </div>
+
+    <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+    <header>
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">📈</span>
+                <div>
+                    <div class="logo-text">StockRead</div>
+                    <div class="logo-tagline">Driving Mode</div>
+                </div>
+            </div>
+
+            <div class="header-status">
+                <span id="status-text">● Live</span>
+            </div>
+        </div>
+
+        <div class="header-meta">
+            <span id="last-update">—</span>
+            <span id="countdown">—</span>
+            <button id="pause-btn">⏸ Pause</button>
+        </div>
+    </header>
+
+    <!-- ─── Main ───────────────────────────────────────────────────────────── -->
+    <main>
+
+        <!-- Add stock form -->
+        <form id="add-form" autocomplete="off">
+            <input id="add-input" type="text" placeholder="Add ticker (e.g. GOOG)" maxlength="6"
+                aria-label="Add stock ticker" />
+            <button type="submit">+ Add</button>
+        </form>
+
+        <!-- Finnhub API Key (optional, for more reliable data) -->
+        <details id="settings-panel" style="margin-bottom:24px; max-width:520px;">
+            <summary
+                style="cursor:pointer; font-size:13px; color:var(--text-dim); user-select:none; list-style:none; display:flex; align-items:center; gap:8px;">
+                <span>⚙️</span> <span>Data Source Settings</span>
+                <span
+                    style="font-size:11px; background:rgba(123,97,255,0.15); border:1px solid rgba(123,97,255,0.25); color:var(--accent); border-radius:4px; padding:2px 8px; margin-left:4px;">Optional</span>
+            </summary>
+            <div
+                style="margin-top:14px; padding:18px; background:var(--glass); border:1px solid var(--border); border-radius:var(--radius-sm);">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.6;">
+                    By default, prices are fetched via a public proxy (no sign-up needed). For more reliable data, add a
+                    free
+                    <a href="https://finnhub.io/register" target="_blank" rel="noopener"
+                        style="color:var(--accent);">Finnhub API key</a>.
+                </p>
+                <form id="api-key-form" style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <input id="api-key-input" type="password" placeholder="Finnhub API key (optional)"
+                        autocomplete="off"
+                        style="flex:1; min-width:200px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:10px 14px; font-size:13px; font-family:inherit; outline:none;" />
+                    <button type="submit"
+                        style="background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); border-radius:var(--radius-sm); padding:10px 18px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap;">Save
+                        Key</button>
+                </form>
+                <div id="api-key-status" style="margin-top:8px; font-size:12px; color:var(--text-muted);"></div>
+            </div>
+        </details>
+
+
+        <!-- Stock cards grid -->
+        <div id="stock-grid" role="list" aria-label="Watchlist"></div>
+
+        <!-- Voice command reference -->
+        <div id="commands-help">
+            <h3>🎤 Voice Commands</h3>
+            <div class="cmd-grid">
+                <div class="cmd-row">
+                    <span class="cmd-phrase">read prices</span>
+                    <span class="cmd-desc">Read all stocks aloud</span>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-phrase">how is TSLA doing</span>
+                    <span class="cmd-desc">Read one stock</span>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-phrase">add AMZN</span>
+                    <span class="cmd-desc">Add to watchlist</span>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-phrase">remove TSLA</span>
+                    <span class="cmd-desc">Remove from watchlist</span>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-phrase">pause</span>
+                    <span class="cmd-desc">Stop auto-announcing</span>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-phrase">resume</span>
+                    <span class="cmd-desc">Start auto-announcing</span>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ─── Floating Mic Button ────────────────────────────────────────────── -->
+    <div class="mic-label">Tap to Speak</div>
+    <button id="mic-btn" title="Voice command (tap to speak)" aria-label="Voice command">
+        <span id="mic-icon">🎤</span>
+    </button>
+
+    <script type="module" src="app.js"></script>
+</body>
+
+</html>
