@@ -559,11 +559,22 @@ function renderGrid() {
         card.dataset.symbol = symbol;
 
         if (!q) {
+            const removeButtonHtml = isEditMode
+                ? `<button class="remove-btn" title="Remove ${symbol}" aria-label="Remove ${symbol}">✕</button>`
+                : '';
             card.innerHTML = `
+        ${removeButtonHtml}
         <div class="card-symbol">${symbol}</div>
         <div class="card-price loading-pulse">—</div>
         <div class="card-change neutral">Loading…</div>
       `;
+            const removeBtn = card.querySelector('.remove-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    removeStock(symbol);
+                });
+            }
             if (!isEditMode) {
                 card.addEventListener('click', () => announceOne(symbol));
             }
