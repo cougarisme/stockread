@@ -454,9 +454,12 @@ function announceOne(symbol) {
 // ─── Voice Command Handler ────────────────────────────────────────────────────
 
 function handleVoiceCommand(transcript) {
+    if (!transcript || !transcript.trim()) {
+        return;
+    }
+
     if (transcript === "__WAKE_WORD__") {
         cancelSpeech();
-        speak("Yes?", { priority: true, rate: 1.1 });
         setStatus('Listening (Wake-word)…');
         return;
     }

@@ -241,7 +241,10 @@ export function enableInterruptionMode() {
             console.log('Final voice input:', transcript);
             if (wakeWordTriggered) {
                 // If wake-word was already triggered, this final result is the query
-                onCommandCallback?.(transcript.replace(/(gugu|googoo|google|goo goo)/i, '').trim());
+                const cleaned = transcript.replace(/(gugu|googoo|google|goo goo)/i, '').trim();
+                if (cleaned) {
+                    onCommandCallback?.(cleaned);
+                }
                 wakeWordTriggered = false;
             } else {
                 if (isSpeaking()) cancelSpeech();
