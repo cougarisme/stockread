@@ -45,6 +45,23 @@
         <div class="header-meta">
             <span id="last-update">—</span>
             <span id="countdown">—</span>
+            <label for="interval-select" style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-dim);">
+                Read every
+                <select id="interval-select" style="background:var(--glass); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 10px; font-size:12px;">
+                    <option value="1">1m</option>
+                    <option value="3">3m</option>
+                    <option value="5" selected>5m</option>
+                    <option value="10">10m</option>
+                    <option value="15">15m</option>
+                </select>
+            </label>
+            <label for="speech-output-select" style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-dim);">
+                Output
+                <select id="speech-output-select" style="background:var(--glass); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:6px 10px; font-size:12px;">
+                    <option value="browser">Browser Voice</option>
+                    <option value="stream">Audio Stream (Car)</option>
+                </select>
+            </label>
             <button id="pause-btn">⏸ Pause</button>
         </div>
     </header>
@@ -52,12 +69,20 @@
     <!-- ─── Main ───────────────────────────────────────────────────────────── -->
     <main>
 
+        <div class="list-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <h2 style="font-size:18px; color:var(--text); margin:0;">Watchlist</h2>
+            <button id="edit-btn" style="padding: 8px 16px; font-size: 14px;">✎ Edit List</button>
+        </div>
+
         <!-- Add stock form -->
-        <form id="add-form" autocomplete="off">
-            <input id="add-input" type="text" placeholder="Add ticker (e.g. GOOG)" maxlength="6"
+        <form id="add-form" autocomplete="off" style="display:none;">
+            <input id="add-input" type="text" placeholder="Add ticker (e.g. GOOG)" maxlength="20"
                 aria-label="Add stock ticker" />
-            <button type="submit">+ Add</button>
+            <div id="search-results" class="search-dropdown" style="display:none;"></div>
         </form>
+        <p id="edit-hint" style="display:none; margin:-16px 0 20px; font-size:12px; color:var(--text-dim);">
+            Edit mode: type symbol and press Enter to add, or tap the red ✕ on a card to remove.
+        </p>
 
         <!-- Finnhub API Key (optional, for more reliable data) -->
         <details id="settings-panel" style="margin-bottom:24px; max-width:520px;">
@@ -83,7 +108,22 @@
                         style="background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); border-radius:var(--radius-sm); padding:10px 18px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap;">Save
                         Key</button>
                 </form>
-                <div id="api-key-status" style="margin-top:8px; font-size:12px; color:var(--text-muted);"></div>
+                <div id="api-key-status" style="margin-top:8px; font-size:12px; color:var(--text-muted); margin-bottom:16px;"></div>
+
+                <hr style="border:0; border-top:1px solid var(--border); margin:16px 0;" />
+
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.6;">
+                    To enable the <strong>AI Chatbot</strong>, add your Gemini API key.
+                </p>
+                <form id="ai-key-form" style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <input id="ai-key-input" type="password" placeholder="Gemini API key"
+                        autocomplete="off"
+                        style="flex:1; min-width:200px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:var(--radius-sm); padding:10px 14px; font-size:13px; font-family:inherit; outline:none;" />
+                    <button type="submit"
+                        style="background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); border-radius:var(--radius-sm); padding:10px 18px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap;">Save
+                        Key</button>
+                </form>
+                <div id="ai-key-status" style="margin-top:8px; font-size:12px; color:var(--text-muted);"></div>
             </div>
         </details>
 

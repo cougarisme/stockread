@@ -31,6 +31,31 @@ export async function fetchQuotes(symbols) {
   return quotes;
 }
 
+/**
+ * Search for stocks by name or ticker using the local /api/search proxy.
+ */
+export async function searchStocks(query) {
+  if (!query || query.length < 2) return [];
+  const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+  if (!res.ok) throw new Error(`Search error: HTTP ${res.status}`);
+  const data = await res.json();
+  return data?.results || [];
+}
+
+/**
+ * Chat with the LLM via the local /api/chat proxy.
+ */
+export async function chatWithAI(message, context, apiKey) {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, context, apiKey })
+  });
+  if (!res.ok) throw new Error(`Chat error: HTTP ${res.status}`);
+  const data = await res.json();
+  return data?.response;
+}
+
 // Optional: Finnhub real-time (no CORS, no proxy needed)
 async function fetchFinnhubQuotes(symbols) {
   const results = await Promise.allSettled(symbols.map(async (symbol) => {
@@ -79,6 +104,10 @@ export function buildSpeechText(quote) {
   const dollars = Math.floor(Math.abs(quote.price));
   const cents = Math.round((Math.abs(quote.price) - dollars) * 100);
   const centsStr = cents > 0 ? ` and ${cents} cents` : '';
+  const starters = isUp
+    ? ["Good news,", "Nice move,", "Heads up,"]
+    : ["Quick update,", "Careful here,", "Market check,"];
+  const starter = starters[Math.floor(Math.random() * starters.length)];
 
   let context = "";
   if (quote.high && Math.abs(quote.price - quote.high) < (quote.price * 0.001)) {
@@ -87,6 +116,6 @@ export function buildSpeechText(quote) {
     context = ". It's currently near its daily low.";
   }
 
-  return `${quote.name} ${emotion} ${pct.toFixed(1)} percent, sitting at ${dollars} dollars${centsStr}${context}`;
+  return `${starter} ${quote.name} ${emotion} ${pct.toFixed(1)} percent, now at ${dollars} dollars${centsStr}${context}`;
 }
 

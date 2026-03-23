@@ -2,26 +2,30 @@
  * app.js — Main orchestrator for StockRead driving mode app
  */
 
-import { fetchQuotes, buildSpeechText, setFinnhubKey } from './api.js';
+import { fetchQuotes, buildSpeechText, setFinnhubKey, searchStocks, chatWithAI } from './api.js';
 import {
-    initTTS, speak, cancelSpeech, isSpeaking,
+    initTTS, speak, cancelSpeech, isSpeaking, setSpeechOutputMode,
     initSTT, startListening, stopListening, isListening,
-    isSpeechRecognitionSupported, parseCommand
+    isSpeechRecognitionSupported, parseCommand, enableInterruptionMode
 } from './speech.js';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const DEFAULT_WATCHLIST = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'];
 const REFRESH_INTERVAL_MS = 60_000;   // refresh prices every 60s
-const ANNOUNCE_INTERVAL_MS = 300_000; // auto-announce every 5 min
+const DEFAULT_ANNOUNCE_INTERVAL_MIN = 5;
+const ANNOUNCE_INTERVAL_STORAGE_KEY = 'stockread-announce-interval-min';
+const SPEECH_OUTPUT_STORAGE_KEY = 'stockread-speech-output-mode';
 
 let watchlist = [];
 let quotes = {};           // symbol → quote object
 let autoPaused = false;
 let refreshTimer = null;
 let announceTimer = null;
-let announceCountdown = ANNOUNCE_INTERVAL_MS / 1000;
+let announceIntervalMs = DEFAULT_ANNOUNCE_INTERVAL_MIN * 60_000;
+let announceCountdown = announceIntervalMs / 1000;
 let countdownTimer = null;
+let isEditMode = false;
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 
@@ -39,11 +43,21 @@ const loadingOverlay = document.getElementById('loading-overlay');
 const apiKeyForm = document.getElementById('api-key-form');
 const apiKeyInput = document.getElementById('api-key-input');
 const apiKeyStatus = document.getElementById('api-key-status');
+const aiKeyForm = document.getElementById('ai-key-form');
+const aiKeyInput = document.getElementById('ai-key-input');
+const aiKeyStatus = document.getElementById('ai-key-status');
+const searchResults = document.getElementById('search-results');
+const editBtn = document.getElementById('edit-btn');
+const intervalSelect = document.getElementById('interval-select');
+const speechOutputSelect = document.getElementById('speech-output-select');
+const editHint = document.getElementById('edit-hint');
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
     loadWatchlist();
+    loadAnnounceInterval();
+    loadSpeechOutputMode();
 
     // Load saved Finnhub key
     const savedKey = localStorage.getItem('stockread-finnhub-key');
@@ -51,6 +65,13 @@ async function init() {
         setFinnhubKey(savedKey);
         if (apiKeyInput) apiKeyInput.value = savedKey;
         if (apiKeyStatus) apiKeyStatus.textContent = '✓ Finnhub key active';
+    }
+
+    // Load saved Gemini key
+    const savedAiKey = localStorage.getItem('stockread-ai-key');
+    if (savedAiKey) {
+        if (aiKeyInput) aiKeyInput.value = savedAiKey;
+        if (aiKeyStatus) aiKeyStatus.textContent = '✓ AI Chatbot active';
     }
 
     initTTS();
@@ -74,6 +95,7 @@ async function init() {
             setStatus('Mic error: ' + err);
         }
     });
+    enableInterruptionMode();
 
     if (!isSpeechRecognitionSupported()) {
         sttUnsupportedBanner.style.display = 'flex';
@@ -81,7 +103,6 @@ async function init() {
         micBtn.title = 'Speech recognition not supported in this browser';
     }
 
-    // Mic button: click to start listening
     micBtn.addEventListener('click', () => {
         if (isListening()) {
             stopListening();
@@ -89,6 +110,49 @@ async function init() {
             startListening();
         }
     });
+
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            isEditMode = !isEditMode;
+            editBtn.classList.toggle('active', isEditMode);
+            editBtn.textContent = isEditMode ? '✓ Done' : '✎ Edit List';
+            grid.classList.toggle('edit-mode', isEditMode);
+            if (addForm) {
+                addForm.style.display = isEditMode ? 'flex' : 'none';
+            }
+            if (editHint) {
+                editHint.style.display = isEditMode ? 'block' : 'none';
+            }
+            if (!isEditMode) {
+                addInput.value = '';
+                searchResults.style.display = 'none';
+            } else {
+                addInput.focus();
+            }
+            renderGrid();
+        });
+    }
+
+    if (intervalSelect) {
+        intervalSelect.value = String(announceIntervalMs / 60_000);
+        intervalSelect.addEventListener('change', () => {
+            const minutes = Number(intervalSelect.value);
+            setAnnounceInterval(minutes);
+            speak(`Read interval set to ${minutes} minute${minutes === 1 ? '' : 's'}.`, { priority: true, pitch: 1.08, rate: 1.0 });
+        });
+    }
+
+    if (speechOutputSelect) {
+        const savedMode = localStorage.getItem(SPEECH_OUTPUT_STORAGE_KEY) || 'browser';
+        speechOutputSelect.value = savedMode;
+        speechOutputSelect.addEventListener('change', () => {
+            const mode = speechOutputSelect.value === 'stream' ? 'stream' : 'browser';
+            setSpeechOutputMode(mode);
+            localStorage.setItem(SPEECH_OUTPUT_STORAGE_KEY, mode);
+            const label = mode === 'stream' ? 'audio stream mode' : 'browser voice mode';
+            speak(`Switched to ${label}.`, { priority: true, pitch: 1.02, rate: 1.0 });
+        });
+    }
 
     pauseBtn.addEventListener('click', () => {
         autoPaused = !autoPaused;
@@ -100,9 +164,54 @@ async function init() {
     addForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const sym = addInput.value.trim().toUpperCase().replace(/[^A-Z.]/g, '');
-        if (sym) addStock(sym);
+        if (sym) {
+            addStock(sym);
+            searchResults.style.display = 'none';
+        }
         addInput.value = '';
     });
+
+    // Search logic with debounce
+    let searchDebounce = null;
+    addInput.addEventListener('input', () => {
+        const query = addInput.value.trim();
+        clearTimeout(searchDebounce);
+        if (query.length < 2) {
+            searchResults.style.display = 'none';
+            return;
+        }
+
+        searchDebounce = setTimeout(async () => {
+            try {
+                const results = await searchStocks(query);
+                renderSearchResults(results);
+            } catch (err) {
+                console.warn('Search error:', err);
+            }
+        }, 300);
+    });
+
+    // Close search results when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!addForm.contains(e.target)) {
+            searchResults.style.display = 'none';
+        }
+    });
+
+    // AI API key form
+    if (aiKeyForm) {
+        aiKeyForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const key = aiKeyInput?.value?.trim();
+            if (key) {
+                localStorage.setItem('stockread-ai-key', key);
+                if (aiKeyStatus) aiKeyStatus.textContent = '✓ AI Key saved';
+            } else {
+                localStorage.removeItem('stockread-ai-key');
+                if (aiKeyStatus) aiKeyStatus.textContent = 'AI Key cleared';
+            }
+        });
+    }
 
     // Finnhub API key form
     if (apiKeyForm) {
@@ -125,7 +234,8 @@ async function init() {
     await refresh();
     startTimers();
 
-    speak('StockRead is ready. I will read your portfolio prices every 5 minutes. Tap the mic to give a voice command.', { priority: true });
+    const initialMinutes = Math.round(announceIntervalMs / 60_000);
+    speak(`StockRead is ready. I will read your portfolio every ${initialMinutes} minute${initialMinutes === 1 ? '' : 's'}. Tap the mic to give a voice command.`, { priority: true });
 }
 
 // ─── Watchlist ────────────────────────────────────────────────────────────────
@@ -137,6 +247,28 @@ function loadWatchlist() {
 
 function saveWatchlist() {
     localStorage.setItem('stockread-watchlist', JSON.stringify(watchlist));
+}
+
+function loadAnnounceInterval() {
+    const saved = Number(localStorage.getItem(ANNOUNCE_INTERVAL_STORAGE_KEY));
+    if (!Number.isFinite(saved)) return;
+    setAnnounceInterval(saved, { persist: false, restart: false });
+}
+
+function loadSpeechOutputMode() {
+    const mode = localStorage.getItem(SPEECH_OUTPUT_STORAGE_KEY) || 'browser';
+    setSpeechOutputMode(mode);
+}
+
+function setAnnounceInterval(minutes, { persist = true, restart = true } = {}) {
+    const clampedMinutes = Math.min(60, Math.max(1, Math.round(minutes || DEFAULT_ANNOUNCE_INTERVAL_MIN)));
+    announceIntervalMs = clampedMinutes * 60_000;
+    if (persist) {
+        localStorage.setItem(ANNOUNCE_INTERVAL_STORAGE_KEY, String(clampedMinutes));
+    }
+    if (restart) {
+        resetAnnounceCountdown();
+    }
 }
 
 function addStock(symbol) {
@@ -151,16 +283,29 @@ function addStock(symbol) {
 }
 
 function removeStock(symbol) {
-    const idx = watchlist.indexOf(symbol);
+    let targetSymbol = symbol.toUpperCase();
+
+    // Fuzzy match: if symbol not in list, check company names in our current quotes
+    if (!watchlist.includes(targetSymbol)) {
+        const found = Object.values(quotes).find(q =>
+            q.name.toLowerCase().includes(symbol.toLowerCase()) ||
+            q.symbol.toUpperCase() === targetSymbol
+        );
+        if (found && watchlist.includes(found.symbol)) {
+            targetSymbol = found.symbol;
+        }
+    }
+
+    const idx = watchlist.indexOf(targetSymbol);
     if (idx === -1) {
-        speak(`${symbol} is not in your watchlist.`, { priority: true });
+        speak(`I couldn't find ${symbol} in your watchlist.`, { priority: true });
         return;
     }
     watchlist.splice(idx, 1);
     saveWatchlist();
-    delete quotes[symbol];
+    delete quotes[targetSymbol];
     renderGrid();
-    speak(`Removed ${symbol} from your watchlist.`, { priority: true });
+    speak(`Removed ${targetSymbol} from your watchlist.`, { priority: true });
 }
 
 // ─── Data Refresh ─────────────────────────────────────────────────────────────
@@ -203,7 +348,7 @@ function startTimers() {
 }
 
 function resetAnnounceCountdown() {
-    announceCountdown = ANNOUNCE_INTERVAL_MS / 1000;
+    announceCountdown = announceIntervalMs / 1000;
     updateCountdownDisplay();
 }
 
@@ -272,9 +417,21 @@ function announceOne(symbol) {
 // ─── Voice Command Handler ────────────────────────────────────────────────────
 
 function handleVoiceCommand(transcript) {
+    if (transcript === "__WAKE_WORD__") {
+        cancelSpeech();
+        speak("Yes?", { priority: true, rate: 1.1 });
+        setStatus('Listening (Wake-word)…');
+        return;
+    }
     const cmd = parseCommand(transcript);
     if (!cmd) {
-        speak("Sorry, I didn't catch that. Try saying: read prices, add AAPL, or remove TSLA.", { priority: true });
+        // Fallback to AI Chatbot if key is available
+        const aiKey = localStorage.getItem('stockread-ai-key');
+        if (aiKey) {
+            handleAIChat(transcript, aiKey);
+        } else {
+            speak("Sorry, I didn't catch that. Try saying: read prices, add AAPL, or remove TSLA.", { priority: true });
+        }
         return;
     }
 
@@ -307,10 +464,54 @@ function handleVoiceCommand(transcript) {
     }
 }
 
+async function handleAIChat(message, apiKey) {
+    setStatus('Thinking…');
+    try {
+        const context = watchlist.map(s => ({
+            symbol: s,
+            price: quotes[s]?.price,
+            change: quotes[s]?.changePercent
+        }));
+
+        const response = await chatWithAI(message, context, apiKey);
+        speak(response, { priority: true });
+    } catch (err) {
+        console.error('AI error:', err);
+        speak("I'm sorry, I'm having trouble connecting to my brain right now.", { priority: true });
+    } finally {
+        setStatus(autoPaused ? '⏸ Paused' : '● Live');
+    }
+}
+
 // ─── Render ───────────────────────────────────────────────────────────────────
+
+function renderSearchResults(results) {
+    if (results.length === 0) {
+        searchResults.style.display = 'none';
+        return;
+    }
+
+    searchResults.innerHTML = '';
+    results.forEach(res => {
+        const div = document.createElement('div');
+        div.className = 'search-item';
+        div.innerHTML = `
+            <span class="search-item-symbol">${res.symbol}</span>
+            <span class="search-item-name">${res.name}</span>
+        `;
+        div.addEventListener('click', () => {
+            addStock(res.symbol);
+            addInput.value = '';
+            searchResults.style.display = 'none';
+        });
+        searchResults.appendChild(div);
+    });
+    searchResults.style.display = 'block';
+}
 
 function renderGrid() {
     grid.innerHTML = '';
+    grid.classList.toggle('edit-mode', isEditMode);
     watchlist.forEach(symbol => {
         const q = quotes[symbol];
         const card = document.createElement('div');
@@ -323,7 +524,9 @@ function renderGrid() {
         <div class="card-price loading-pulse">—</div>
         <div class="card-change neutral">Loading…</div>
       `;
-            card.addEventListener('click', () => announceOne(symbol));
+            if (!isEditMode) {
+                card.addEventListener('click', () => announceOne(symbol));
+            }
             grid.appendChild(card);
             return;
         }
@@ -336,8 +539,11 @@ function renderGrid() {
         const changeAbs = Math.abs(q.change).toFixed(2);
 
         card.classList.add(changeClass);
+        const removeButtonHtml = isEditMode
+            ? `<button class="remove-btn" title="Remove ${symbol}" aria-label="Remove ${symbol}">✕</button>`
+            : '';
         card.innerHTML = `
-      <button class="remove-btn" title="Remove ${symbol}" aria-label="Remove ${symbol}">✕</button>
+      ${removeButtonHtml}
       <div class="card-symbol">${symbol}</div>
       <div class="card-name">${q.name}</div>
       <div class="card-price">$${price}</div>
@@ -354,11 +560,16 @@ function renderGrid() {
       </div>
     `;
 
-        card.querySelector('.remove-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            removeStock(symbol);
-        });
-        card.addEventListener('click', () => announceOne(symbol));
+        const removeBtn = card.querySelector('.remove-btn');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                removeStock(symbol);
+            });
+        }
+        if (!isEditMode) {
+            card.addEventListener('click', () => announceOne(symbol));
+        }
         grid.appendChild(card);
     });
 }

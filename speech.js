@@ -8,41 +8,124 @@ let ttsVoice = null;
 let ttsPitch = 1;
 let ttsRate = 0.93;
 let ttsVolume = 1;
+let speechOutputMode = 'browser';
+let currentAudio = null;
+let audioQueue = [];
+let audioBusy = false;
 
 export function initTTS() {
     const loadVoices = () => {
         const voices = speechSynthesis.getVoices();
-        // Prefer a natural English voice
+        // Prefer richer, natural-sounding voices before generic fallback.
+        const preferredNames = [
+            'Google US English',
+            'Microsoft Aria Online',
+            'Microsoft Jenny Online',
+            'Samantha',
+            'Alex'
+        ];
+
         ttsVoice =
-            voices.find(v => v.name.includes('Samantha')) ||
-            voices.find(v => v.lang === 'en-US' && !v.localService === false) ||
+            voices.find(v => preferredNames.some(name => v.name.includes(name))) ||
+            voices.find(v => v.lang === 'en-US' && v.localService) ||
             voices.find(v => v.lang === 'en-US') ||
+            voices.find(v => v.lang?.startsWith('en')) ||
             voices[0] || null;
     };
     loadVoices();
     speechSynthesis.onvoiceschanged = loadVoices;
 }
 
+export function setSpeechOutputMode(mode) {
+    speechOutputMode = mode === 'stream' ? 'stream' : 'browser';
+    if (speechOutputMode === 'stream') {
+        if (window.speechSynthesis) speechSynthesis.cancel();
+    } else {
+        stopAudioPlayback();
+    }
+}
+
+function stopAudioPlayback() {
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+    }
+    audioQueue = [];
+    audioBusy = false;
+}
+
+function playNextAudio() {
+    if (audioBusy || audioQueue.length === 0) return;
+    const nextText = audioQueue.shift();
+    const audioUrl = `/api/tts?text=${encodeURIComponent(nextText)}&_=${Date.now()}`;
+
+    audioBusy = true;
+    currentAudio = new Audio(audioUrl);
+    currentAudio.volume = ttsVolume;
+
+    const cleanupAndContinue = () => {
+        if (currentAudio) {
+            currentAudio.onended = null;
+            currentAudio.onerror = null;
+            currentAudio = null;
+        }
+        audioBusy = false;
+        playNextAudio();
+    };
+
+    currentAudio.onended = cleanupAndContinue;
+    currentAudio.onerror = cleanupAndContinue;
+    currentAudio.play().catch(() => {
+        cleanupAndContinue();
+    });
+}
+
 export function speak(text, { priority = false, pitch = ttsPitch, rate = ttsRate } = {}) {
-    if (!window.speechSynthesis) return;
-    if (priority) speechSynthesis.cancel();
+    if (speechOutputMode === 'stream') {
+        if (priority) stopAudioPlayback();
+        audioQueue.push(text);
+        playNextAudio();
+        return null;
+    }
+
+    if (!window.speechSynthesis) return null;
+    if (priority) {
+        speechSynthesis.cancel();
+    }
 
     const utter = new SpeechSynthesisUtterance(text);
     utter.voice = ttsVoice;
-    utter.pitch = pitch;
-    utter.rate = rate;
+    const hasStrongEmotion = /!|soaring|massive|great day|heavy hit|staggering|fantastic/i.test(text);
+    const variation = hasStrongEmotion ? 0.05 : 0.02;
+    const dynamicPitch = Math.max(0.7, Math.min(1.35, pitch + (Math.random() * variation - variation / 2)));
+    const dynamicRate = Math.max(0.82, Math.min(1.12, rate + (Math.random() * variation - variation / 2)));
+    utter.pitch = dynamicPitch;
+    utter.rate = dynamicRate;
     utter.volume = ttsVolume;
     speechSynthesis.speak(utter);
+
+    utter.onend = () => {
+        // If we were auto-restarting STT, do it now
+        if (sttShouldRestart) {
+            startListening();
+            sttShouldRestart = false;
+        }
+    };
+
     return utter;
 }
 
 
 export function cancelSpeech() {
     if (window.speechSynthesis) speechSynthesis.cancel();
+    stopAudioPlayback();
 }
 
 export function isSpeaking() {
-    return window.speechSynthesis?.speaking || false;
+    const browserSpeaking = window.speechSynthesis?.speaking || false;
+    const streamSpeaking = !!currentAudio && !currentAudio.paused;
+    return browserSpeaking || streamSpeaking;
 }
 
 // ─── STT ────────────────────────────────────────────────────────────────────
@@ -56,6 +139,8 @@ let onCommandCallback = null;
 let onStartCallback = null;
 let onEndCallback = null;
 let onErrorCallback = null;
+let sttShouldRestart = false;
+let silenceTimer = null;
 
 export function isSpeechRecognitionSupported() {
     return !!SpeechRecognition;
@@ -92,6 +177,14 @@ export function initSTT({ onCommand, onStart, onEnd, onError } = {}) {
     recognition.onresult = (e) => {
         const transcript = e.results[e.results.length - 1][0].transcript.trim().toLowerCase();
         console.log('Voice input:', transcript);
+
+        // Interruption logic: if speaking, cancel speech and treat as command
+        if (isSpeaking()) {
+            cancelSpeech();
+            onCommandCallback?.(transcript);
+            return;
+        }
+
         onCommandCallback?.(transcript);
     };
 
@@ -114,6 +207,60 @@ export function stopListening() {
 
 export function isListening() {
     return sttActive;
+}
+
+/**
+ * Enhanced start: if speaking, we might want to wait or use a different mode.
+ * For "Interruption", we actually want STT to be ACTIVE while TTS is running.
+ * Most browsers disable STT while TTS is playing to avoid feedback.
+  * We will try to keep it running.
+  */
+let wakeWordTriggered = false;
+
+export function enableInterruptionMode() {
+    if (!recognition) return;
+    
+    // We'll use a trick: restart STT periodically if it's "continuous" but stops
+    recognition.continuous = true;
+    recognition.interimResults = true; 
+
+    recognition.onresult = (e) => {
+        const results = e.results;
+        const last = results[results.length - 1];
+        const transcript = last[0].transcript.trim().toLowerCase();
+        
+        // Wake-word detection (e.g., "gugu", "googoo", "google")
+        if (!wakeWordTriggered && /(gugu|googoo|google|goo goo)/.test(transcript)) {
+            console.log('Wake-word detected:', transcript);
+            wakeWordTriggered = true;
+            if (isSpeaking()) cancelSpeech();
+            onCommandCallback?.("__WAKE_WORD__");
+        }
+
+        if (last.isFinal) {
+            console.log('Final voice input:', transcript);
+            if (wakeWordTriggered) {
+                // If wake-word was already triggered, this final result is the query
+                onCommandCallback?.(transcript.replace(/(gugu|googoo|google|goo goo)/i, '').trim());
+                wakeWordTriggered = false;
+            } else {
+                if (isSpeaking()) cancelSpeech();
+                onCommandCallback?.(transcript);
+            }
+        }
+    };
+    
+    // Auto-restart STT if it ends (to keep wake-word alive)
+    recognition.onend = () => {
+        sttActive = false;
+        // Periodic restart
+        setTimeout(() => {
+            if (!sttActive) startListening();
+        }, 300);
+        onEndCallback?.();
+    };
+
+    if (!sttActive) startListening();
 }
 
 // ─── Command Parser ──────────────────────────────────────────────────────────
