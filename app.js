@@ -16,6 +16,9 @@ const REFRESH_INTERVAL_MS = 60_000;   // refresh prices every 60s
 const DEFAULT_ANNOUNCE_INTERVAL_MIN = 5;
 const ANNOUNCE_INTERVAL_STORAGE_KEY = 'stockread-announce-interval-min';
 const SPEECH_OUTPUT_STORAGE_KEY = 'stockread-speech-output-mode';
+const USER_ID_PARAM = 'u';
+const ACTIVE_USER_STORAGE_KEY = 'stockread-active-user-id';
+const WATCHLIST_STORAGE_PREFIX = 'stockread-watchlist-user-';
 
 let watchlist = [];
 let quotes = {};           // symbol → quote object
@@ -26,6 +29,7 @@ let announceIntervalMs = DEFAULT_ANNOUNCE_INTERVAL_MIN * 60_000;
 let announceCountdown = announceIntervalMs / 1000;
 let countdownTimer = null;
 let isEditMode = false;
+let currentUserId = '';
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 
@@ -55,6 +59,7 @@ const editHint = document.getElementById('edit-hint');
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
+    currentUserId = getOrCreateUserId();
     loadWatchlist();
     loadAnnounceInterval();
     loadSpeechOutputMode();
@@ -241,12 +246,44 @@ async function init() {
 // ─── Watchlist ────────────────────────────────────────────────────────────────
 
 function loadWatchlist() {
-    const saved = localStorage.getItem('stockread-watchlist');
+    const saved = localStorage.getItem(getUserWatchlistStorageKey());
     watchlist = saved ? JSON.parse(saved) : [...DEFAULT_WATCHLIST];
 }
 
 function saveWatchlist() {
-    localStorage.setItem('stockread-watchlist', JSON.stringify(watchlist));
+    localStorage.setItem(getUserWatchlistStorageKey(), JSON.stringify(watchlist));
+}
+
+function getUserWatchlistStorageKey() {
+    return `${WATCHLIST_STORAGE_PREFIX}${currentUserId}`;
+}
+
+function getOrCreateUserId() {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = sanitizeUserId(params.get(USER_ID_PARAM));
+    const fromStorage = sanitizeUserId(localStorage.getItem(ACTIVE_USER_STORAGE_KEY));
+    const userId = fromUrl || fromStorage || generateUserId();
+
+    localStorage.setItem(ACTIVE_USER_STORAGE_KEY, userId);
+    if (params.get(USER_ID_PARAM) !== userId) {
+        params.set(USER_ID_PARAM, userId);
+        const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+        history.replaceState({}, '', nextUrl);
+    }
+    return userId;
+}
+
+function sanitizeUserId(raw) {
+    if (!raw) return '';
+    const normalized = String(raw).trim();
+    return /^[a-zA-Z0-9_-]{8,40}$/.test(normalized) ? normalized : '';
+}
+
+function generateUserId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    }
+    return `u${Math.random().toString(36).slice(2, 14)}`;
 }
 
 function loadAnnounceInterval() {
